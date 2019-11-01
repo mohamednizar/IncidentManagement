@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import PropTypes from 'prop-types';
 import { useSelector, useDispatch } from 'react-redux';
 import moment from 'moment';
-import { Link } from 'react-router-dom';
+import { Link, Redirect } from 'react-router-dom';
 import { withRouter } from "react-router";
+import { useIntl } from "react-intl";
 
 import { withStyles } from '@material-ui/core/styles';
 import Stepper from '@material-ui/core/Stepper';
@@ -13,17 +14,23 @@ import StepContent from '@material-ui/core/StepContent';
 import Button from '@material-ui/core/Button';
 import Paper from '@material-ui/core/Paper';
 import Typography from '@material-ui/core/Typography';
+import Grid from "@material-ui/core/Grid";
+import { changeLanguage } from "../../shared/state/Shared.actions";
+import Logo from "../../shared/components/Logo";
+import CircularProgress from '@material-ui/core/CircularProgress';
+import green from '@material-ui/core/colors/green';
 
 import DescriptionSection from './GuestFormDescriptionSection';
-import CategorySection from './GuestFormCatogorySection';
+// import CategorySection from './GuestFormCatogorySection';
 import FileUploadSection from './GuestFormFileUploadSection';
 import DateTimeSection from './GuestFormDateTimeSection';
 import LocationSection from './GuestFromLocationSection';
-import ContactSection from './GuestFormContactSection'
+import ContactSection from './GuestFormContactSection';
 
 import {
     fetchElections,
     fetchCategories,
+    fetchChannels
 } from '../../shared/state/Shared.actions';
 
 import {
@@ -34,8 +41,9 @@ import {
 } from '../../incident/state/incidentActions'
 
 import {
-    moveStepper
+    moveStepper,
 } from '../state/guestViewActions'
+import FileUploader from '../../shared/components/FileUploader';
 
 const styles = theme => ({
     root: {
@@ -48,157 +56,256 @@ const styles = theme => ({
         marginRight: theme.spacing.unit,
     },
     actionsContainer: {
+        marginTop: theme.spacing.unit * 2,
         marginBottom: theme.spacing.unit * 2,
     },
     resetContainer: {
         padding: theme.spacing.unit * 3,
+    },
+    buttonProgress: {
+        color: green[500],
+        position: 'absolute',
+        marginTop: 15,
+        marginLeft: -53,
+    },
+    wrapper: {
+        margin: theme.spacing.unit,
+        position: 'relative',
     },
 });
 
 
 const VerticalLinearStepper = (props) => {
 
-
-    const [skippedSteps, setSkippedSets] = useState(new Set());
-    const [incidentDescription, setIncidentDescription] = useState(null);
-    const [incidentElection, setIncidentElection] = useState('');
-    const [incidentCatogory, setIncidentCatogory] = useState('');
-    const [incidentFiles, setIncidentFiles] = useState(null);
-    const [incidentDateTime, setIncidentDateTime] = useState({
-        date: null,
-        time: null
-    });
-    const [incidentLocation, setIncidentLocation] = useState('');
-    const [incidentContact, setIncidentContact] = useState({
-        name: '',
-        phone: '',
-        email: ''
-    });
-
-    const dispatch = useDispatch();
-    const { elections, categories } = useSelector((state) => (state.sharedReducer));
-    const { activeIncident, activeIncidentReporter } = useSelector((state) => (state.incident));
-    const { activeStep, isFinished } = useSelector((state) => (state.guestView));
-
-    const incidentId = activeIncident && activeIncident.data ? activeIncident.data.id : null
-    let incidentData = incidentId ? JSON.parse(JSON.stringify(activeIncident.data)): {};
-    let incidentReporterData = incidentId ? JSON.parse(JSON.stringify(activeIncidentReporter.data)) : null;
-
     useEffect(() => {
         dispatch(fetchElections());
         dispatch(fetchCategories());
+        dispatch(fetchChannels());
     }, []);
+
+    const {formatMessage: f} = useIntl();
+
+    const dispatch = useDispatch();
+    const { elections, categories, channels } = useSelector((state) => (state.sharedReducer));
+    let webInfoChannelId = null;
+    if (channels.length > 0) {
+        webInfoChannelId = channels.reduce((previousValue, currValue) => {
+            previousValue = null;
+            if (currValue.name === "Web") {
+                previousValue = currValue.id;
+            }
+            return previousValue;
+        })
+    }
+    const { activeIncident, activeIncidentReporter } = useSelector((state) => (state.incident));
+    const { activeStep, isLoading } = useSelector((state) => (state.guestView));
+
+    const incidentId = activeIncident && activeIncident.data ? activeIncident.data.id : null
+    let incidentData = incidentId ? JSON.parse(JSON.stringify(activeIncident.data)) : {};
+    let incidentReporterData = incidentId ? JSON.parse(JSON.stringify(activeIncidentReporter.data)) : null;
+
+    const [skippedSteps, setSkippedSets] = useState(new Set());
+    const [incidentDescription, setIncidentDescription] = useState(incidentId ? incidentData.description : null);
+    const [incidentElection, setIncidentElection] = useState(incidentId ? incidentData.election : "");
+    // const [incidentCatogory, setIncidentCatogory] = useState(incidentId? incidentData.category:"");
+    const [incidentFiles, setIncidentFiles] = useState(null);
+    const [incidentDateTime, setIncidentDateTime] = useState({
+        date: incidentId && incidentData.occured_date ? moment(incidentData.occured_date).format('YYYY-MM-DD') : null,
+        time: incidentId && incidentData.occured_date ? moment(incidentData.occured_date).format('HH:mm') : null,
+    });
+
+    // location section
+    const [incidentLocation, setIncidentLocation] = useState(incidentId ? incidentData.location : '');
+    const [incidentAddress, setIncidentAddress] = useState(incidentId ? incidentData.address : '');
+    const [incidentCity, setIncidentCity] = useState(incidentId ? incidentData.city : '');
+
+    const [incidentContact, setIncidentContact] = useState({
+        name: incidentReporterData ? incidentReporterData.name : '',
+        phone: incidentReporterData ? incidentReporterData.telephone : '',
+        mobile: incidentReporterData ? incidentReporterData.mobile : '',
+        email: incidentReporterData ? incidentReporterData.email : ''
+    });
+    const [formErrors, setFormErrors] = useState({})
+
+    const getFormattedDateTime = () => {
+        let dateTime = null;
+        if (incidentDateTime.date && incidentDateTime.time) {
+            dateTime = moment(
+                incidentDateTime.date + " " +
+                incidentDateTime.time, 'YYYY-MM-DD h:mm a'
+            ).format()
+        }
+        return dateTime
+    }
+
+    const validInputs = () => {
+        setFormErrors({ ...formErrors, incidentDescriptionErrorMsg: null, incidentElectionErrorMsg: null, incidentDatetimeErrorMsg: null })
+        let errorMsg = { ...formErrors };
+        let valid = true;
+
+        if (!incidentDescription) {
+            errorMsg = { ...errorMsg, incidentDescriptionErrorMsg: f({id:"eclk.incident.management.report.incidents.description.error.message", defaultMessage:"Description is required"}) };
+            valid = false;
+        }
+        if (!incidentElection) {
+            errorMsg = { ...errorMsg, incidentElectionErrorMsg: f({id:"eclk.incident.management.report.incidents.election.error.message", defaultMessage:"Election is required"})  };
+            valid = false;
+        }
+        if (getFormattedDateTime() == null) {
+            errorMsg = { ...errorMsg, incidentDatetimeErrorMsg: f({id:"eclk.incident.management.report.incidents.datetime.error.message", defaultMessage:"Date and time are required"}) };
+            valid = false;
+        }
+        setFormErrors({ ...errorMsg });
+        return valid;
+    }
 
     const stepDefinitions = {
 
-        0:{
-            title:'Describe the incident',
-            content:<>
-                    <DescriptionSection
-                        handledDescriptionChange={setIncidentDescription}
-                        handleElectionChange={setIncidentElection}
-                        description={incidentDescription}
-                        selectedElection={incidentElection}
-                        elections={elections} />
-                    <div style={{height:20}}></div>
-                    < DateTimeSection 
-                        dateTime={incidentDateTime} 
-                        setDateTime={setIncidentDateTime} />
-                    </>,
+        0: {
+            title: f({ id: "eclk.incident.management.report.incidents.section.describe", defaultMessage: "Describe the incident"}),
+            content: <>
+                <DescriptionSection
+                    handledDescriptionChange={setIncidentDescription}
+                    handleElectionChange={setIncidentElection}
+                    description={incidentDescription}
+                    selectedElection={incidentElection}
+                    elections={elections}
+                    disableDescription={incidentId ? true : false}
+                    formErrors={formErrors}
+                />
+                <div style={{ height: 20 }}></div>
+                < DateTimeSection
+                    dateTime={incidentDateTime}
+                    setDateTime={setIncidentDateTime}
+                    formErrors={formErrors}
+                />
+            </>,
             handler: () => {
-                //description and date time are mandatory
-                //asssumed that once this step is completed user won't be able to update description or datetime
-                if(!incidentId && incidentDateTime.date && incidentDateTime.time){
-                    let dateTime = moment(
-                                        incidentDateTime.date + " " + 
-                                        incidentDateTime.time, 'YYYY-MM-DD HH:mm'
-                                    ).format()
-                    dispatch(createGuestIncident({
-                        election: incidentElection,
-                        description: incidentDescription,
-                        title: 'Guest user submit',
-                        occured_date: dateTime
-                    }))
-                }else{
-                    if( incidentDescription && incidentDateTime.date && incidentDateTime.time){
-                        dispatch(updateGuestIncident(incidentId, {election: incidentElection,}))
+                if (!incidentId) {
+                    //creating new incident
+                    if (validInputs()) {
+                        let incidentData = {
+                            election: incidentElection,
+                            description: incidentDescription,
+                            title: 'Guest user submit',
+                            infoChannel: webInfoChannelId //info channel is web by default.
+                        }
+                        const dateTime = getFormattedDateTime()
+                        if (dateTime) {
+                            incidentData['occured_date'] = dateTime;
+                        }
+                        dispatch(createGuestIncident(incidentData))
+                    }
+                } else {
+                    //updating an existing incident.
+                    //changing description/title is not allowed
+                    if (validInputs()) {
+                        let incidentUpdate = incidentData
+                        incidentUpdate["election"] = incidentElection;
+                        const dateTime = getFormattedDateTime()
+                        if (dateTime) {
+                            incidentUpdate['occured_date'] = dateTime
+                        }
+                        dispatch(updateGuestIncident(incidentId, incidentUpdate))
                     }
                 }
             }
         },
 
-        1:{
-            title:'Describe the location',
-            content: < LocationSection 
-                        location={incidentLocation} 
-                        handledLocationChange={setIncidentLocation} />,
+        1: {
+            title: f({ id: "eclk.incident.management.report.incidents.section.location", defaultMessage: "Describe the incident location" }),
+            content: < LocationSection
+                location={incidentLocation}
+                handledLocationChange={setIncidentLocation}
+                address={incidentAddress}
+                handleAddressChange={setIncidentAddress}
+                city={incidentCity}
+                handleCityChange={setIncidentCity}
+            />,
             handler: () => {
-                if(incidentLocation){
+                if (incidentLocation) {
                     incidentData.location = incidentLocation;
-                    dispatch(updateGuestIncident(incidentId, incidentData))
-                }
-            }
-        },
-
-        2:{
-            title:'Attach files related to incident',
-            content: < FileUploadSection setSelectedFile={setIncidentFiles} />,
-            handler: () => {
-                if (incidentFiles) {
-                    dispatch(uploadFileGuest(incidentId, incidentFiles))
-                }
-            }
-        },
-
-        3:{
-            title:'Your contact details',
-            content: < ContactSection 
-                        contactDetials={incidentContact} 
-                        handleContactDetailsChange={setIncidentContact} />,
-            handler: () => {
-                if(incidentContact.name || incidentContact.phone || incidentContact.email){
-                    incidentReporterData.name = incidentContact.name;
-                    incidentReporterData.telephone = incidentContact.phone;
-                    incidentReporterData.email = incidentContact.email;
-                    dispatch(updateGuestIncidentReporter(incidentReporterData.id, incidentReporterData))
-                }
-            }
-        },
-
-        4:{
-            title:'Select the most suitable category for the incident',
-            content: <CategorySection
-                        categories={categories}
-                        selectedCategory={incidentCatogory}
-                        setSelectedCategory={setIncidentCatogory} />,
-            handler: () => {
-                if(incidentCatogory){
-                    incidentData.category = incidentCatogory;
+                    incidentData.address = incidentAddress;
+                    incidentData.city = incidentCity;
                     dispatch(updateGuestIncident(incidentId, incidentData))
                 }else{
-                    dispatch(moveStepper({step:activeStep+1})) 
+                    dispatch(moveStepper({ step: activeStep + 1 }));
                 }
             }
         },
-        
+
+        2: {
+            title: f({ id:"eclk.incident.management.report.incidents.section.attachment", defaultMessage:"Attach files related to incident"}),
+            content: <FileUploader 
+                        files={incidentFiles} 
+                        setFiles={setIncidentFiles} 
+                    />,
+            handler: () => {
+                if (incidentFiles) {
+                    const fileData = new FormData();
+                    for(var file of incidentFiles){
+                        fileData.append("files[]", file);
+                    }
+                    dispatch(uploadFileGuest(incidentId, fileData))
+                } else {
+                    dispatch(moveStepper({ step: activeStep + 1 }));
+                }
+            }
+        },
+
+        3: {
+            title: f({id:"eclk.incident.management.report.incidents.section.contact", defaultMessage:"Your contact details"}),
+            content: < ContactSection
+                contactDetials={incidentContact}
+                handleContactDetailsChange={setIncidentContact} />,
+            handler: () => {
+                if (incidentContact.name || incidentContact.phone || incidentContact.email) {
+                    incidentReporterData.name = incidentContact.name;
+                    incidentReporterData.telephone = incidentContact.phone;
+                    incidentReporterData.mobile = incidentContact.mobile;
+                    incidentReporterData.email = incidentContact.email;
+                    dispatch(updateGuestIncidentReporter(incidentReporterData.id, incidentReporterData))
+                } else {
+                    dispatch(moveStepper({ step: activeStep + 1 }));
+                }
+            }
+        },
+
+        // 4:{
+        //     title:'Select the most suitable category for the incident',
+        //     content: <CategorySection
+        //                 categories={categories}
+        //                 selectedCategory={incidentCatogory}
+        //                 setSelectedCategory={setIncidentCatogory} />,
+        //     handler: () => {
+        //         if(incidentCatogory){
+        //             incidentData.category = incidentCatogory;
+        //             dispatch(updateGuestIncident(incidentId, incidentData))
+        //         }else{
+        //             dispatch(moveStepper({step:activeStep+1})) 
+        //         }
+
+        //     }
+        // },
+
     }
 
     let steps = [];
 
-    Object.keys(stepDefinitions).forEach(function(stepNumber) {
+    Object.keys(stepDefinitions).forEach(function (stepNumber) {
         steps[stepNumber] = stepDefinitions[stepNumber].title
     });
 
-    const optionalSteps = new Set([1,2,3,4,5])
+    const optionalSteps = new Set([1, 2, 3, 4, 5])
 
     const isStepOptional = step => optionalSteps.has(step);
 
     const handleBack = () => {
-        dispatch(moveStepper({step:activeStep-1}))
+        dispatch(moveStepper({ step: activeStep - 1 }))
     };
 
     const handleReset = () => {
-        dispatch(moveStepper({step:0}))
+        dispatch(moveStepper({ step: 0 }))
 
     };
 
@@ -209,7 +316,7 @@ const VerticalLinearStepper = (props) => {
         const skipped = new Set(skippedSteps.values());
         skipped.add(activeStep);
         setSkippedSets(skipped);
-        dispatch(moveStepper({step:activeStep+1}))
+        dispatch(moveStepper({ step: activeStep + 1 }))
 
     };
 
@@ -230,16 +337,61 @@ const VerticalLinearStepper = (props) => {
     const { classes } = props;
     const GoBackLink = props => <Link to="/" {...props} />
 
-    if(isFinished){
-        props.history.push('/report/success')
+    if (activeStep === Object.keys(stepDefinitions).length) {
+        return <Redirect to='/report/success' />
     }
 
     return (
 
         <div className={classes.root}>
 
-            <Button variant="outlined" onClick={()=>{window.history.back();}}> Back </Button>
-            <h3>Report Incident</h3>
+            <Grid container spacing={24}>
+                <Grid item xs={12} sm={6}>
+                    <Grid item xs={12} sm={6}>
+                        <Logo />
+                    </Grid>
+                </Grid>
+
+                <Grid item xs={12} sm={6}>
+                    <div style={{ textAlign: "right" }}>
+                        <Button
+                            variant="outlined"
+                            color="primary"
+                            onClick={() => dispatch(changeLanguage("si"))}
+                            className={classes.button}
+                        >
+                            {" "}
+                            Sinhala{" "}
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            color="primary"
+                            onClick={() => dispatch(changeLanguage("ta"))}
+                            className={classes.button}
+                        >
+                            {" "}
+                            Tamil{" "}
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            color="primary"
+                            onClick={() => dispatch(changeLanguage("en"))}
+                            className={classes.button}
+                        >
+                            {" "}
+                            English{" "}
+                        </Button>
+                    </div>
+                </Grid>
+            </Grid>
+
+            {/* <Button variant="outlined" onClick={() => { window.history.back(); }}> Back </Button> */}
+            <Typography style={{ width: '100%' }} align="center" variant="h5" marginTop="20">
+                {f({ id: "eclk.incident.management.report.incidents", defaultMessage: "Report Incident" })}
+            </Typography>
+            <Typography style={{ width: '100%' }} align="left" variant="" marginTop="20">
+                {f({ id: "eclk.incident.management.report.incidents.helper.text", defaultMessage: "*fields are mandatory" })}
+            </Typography>
 
             <Stepper activeStep={activeStep} orientation="vertical">
                 {steps.map((label, index) => {
@@ -247,52 +399,58 @@ const VerticalLinearStepper = (props) => {
                     const props = {};
                     const labelProps = {};
                     if (isStepOptional(index)) {
-                        if(index===3){
-                            labelProps.optional = <Typography variant="caption">Optional - you may submit your complaint anonymously. If you choose to do so, you will not be able to obtain status updates from the Election Commission of Sri Lanka</Typography>;
-                        }else{
-                            labelProps.optional = <Typography variant="caption">Optional</Typography>;
+                        if (index === 3) {
+                            // expected here to gives more information on 'contact info'
+                            labelProps.optional = <Typography variant="caption">{f({ id: "eclk.incident.management.report.incidents.forms.label.optional", defaultMessage: "Optional" })}</Typography>;
+                        } else {
+                            labelProps.optional = <Typography variant="caption">{f({ id: "eclk.incident.management.report.incidents.forms.label.optional", defaultMessage: "Optional" })}</Typography>;
                         }
                     }
                     if (isStepSkipped(index)) {
-                      props.completed = false;
+                        props.completed = false;
                     }
 
                     return (
-                    <Step key={label} {...props}>
-                        <StepLabel {...labelProps}>{label}</StepLabel>
-                        <StepContent>
-                            <Typography>{getStepContent(index)}</Typography>
-                            <div className={classes.actionsContainer}>
-                                <div>
-                                    <Button
-                                        disabled={activeStep === 0}
-                                        onClick={handleBack}
-                                        className={classes.button}
-                                    >
-                                        Back
-                                    </Button>
-                                    {isStepOptional(activeStep) && (
+                        <Step key={label} {...props}>
+                            <StepLabel {...labelProps}>{label}</StepLabel>
+                            <StepContent>
+                                <Typography>{getStepContent(index)}</Typography>
+                                <div className={classes.actionsContainer}>
+                                    <div>
+                                        <Button
+                                            disabled={activeStep === 0 || isLoading}
+                                            onClick={handleBack}
+                                            className={classes.button}
+                                        >
+                                            {f({ id:"eclk.incident.management.report.incidents.forms.button.back", defaultMessage: "Back"})}
+                                        </Button>
+                                        {isStepOptional(activeStep) && (
+                                            <Button
+                                                variant="contained"
+                                                color="primary"
+                                                onClick={handleSkip}
+                                                className={classes.button}
+                                                disabled={isLoading}
+                                            >
+                                                {f({id:"eclk.incident.management.report.incidents.forms.button.skip", defaultMessage:"Skip"})}
+                                            </Button>
+                                        )}
                                         <Button
                                             variant="contained"
                                             color="primary"
-                                            onClick={handleSkip}
+                                            onClick={handleNext}
                                             className={classes.button}
+                                            disabled={isLoading}
                                         >
-                                            Skip
-                                    </Button>
-                                    )}
-                                    <Button
-                                        variant="contained"
-                                        color="primary"
-                                        onClick={handleNext}
-                                        className={classes.button}
-                                    >
-                                        {activeStep === steps.length - 1 ? 'Finish' : 'Next'}
-                                    </Button>
+                                            {activeStep === steps.length - 1 ? 
+                                                f({id:"eclk.incident.management.report.incidents.forms.button.finish", defaultMessage:"Finish"}) : 
+                                                f({id:"eclk.incident.management.report.incidents.forms.button.next", defaultMessage:"Next"})}
+                                        </Button>
+                                        {isLoading && <CircularProgress size={24} className={classes.buttonProgress} />}
+                                    </div>
                                 </div>
-                            </div>
-                        </StepContent>
-                    </Step>)
+                            </StepContent>
+                        </Step>)
                 })}
             </Stepper>
             {activeStep === steps.length && (
@@ -308,4 +466,4 @@ VerticalLinearStepper.propTypes = {
     classes: PropTypes.object,
 };
 
-export default withRouter (withStyles(styles)(VerticalLinearStepper));
+export default withRouter(withStyles(styles)(VerticalLinearStepper));

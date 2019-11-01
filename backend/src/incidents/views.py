@@ -45,7 +45,8 @@ from .services import (
     attach_media,
     get_fitlered_incidents_report,
     get_guest_user,
-    get_incident_by_reporter_unique_id
+    get_incident_by_reporter_unique_id,
+    create_reporter
 )
 
 from ..events import services as event_service
@@ -186,6 +187,32 @@ class IncidentList(APIView, IncidentResultsSetPagination):
         raise IncidentException(serializer.errors)
         # return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+class SMSIncident(APIView):
+
+    serializer_class = IncidentSerializer
+
+    def post(self, request, format=None):
+
+        sms_incident_data = request.data
+        telephone = request.data.get("telephone", "No Telephone Number")
+        sms_incident_data["title"] = "SMS by " + telephone
+        sms_incident_data["infoChannel"] = "SMS"
+        serializer = IncidentSerializer(data=sms_incident_data)
+
+        if serializer.is_valid():
+            incident = serializer.save()
+            reporter = create_reporter()
+            reporter.telephone = telephone
+            reporter.save()
+            incident.reporter = reporter
+            return_data = serializer.data
+            
+            incident_data = IncidentSerializer(create_incident_postscript(incident, request.user)).data
+            return_data = incident_data
+
+            return Response(return_data, status=status.HTTP_201_CREATED)
+
+        raise IncidentException(serializer.errors)
 
 class IncidentDetail(APIView):
     """
@@ -308,8 +335,8 @@ class IncidentWorkflowView(APIView):
             if not request.user.has_perm("incidents.can_change_status"):
                 return Response("User can't close incident", status=status.HTTP_401_UNAUTHORIZED)
 
-            comment = json.dumps(request.data['comment'])
-            incident_close(request.user, incident, comment)
+            details = request.data['details']
+            incident_close(request.user, incident, details)
 
         elif workflow == "request-action":
             entity = request.data['entity']
@@ -317,32 +344,32 @@ class IncidentWorkflowView(APIView):
             incident_escalate_external_action(request.user, incident, entity, comment)
 
         elif workflow == "complete-action":
-            comment = json.dumps(request.data['comment'])
+            comment = request.data['comment']
             start_event_id = request.data['start_event']
             start_event = event_service.get_event_by_id(start_event_id)
             incident_complete_external_action(
                 request.user, incident, comment, start_event)
 
         elif workflow == "request-advice":
-            comment = json.dumps(request.data['comment'])
+            comment = request.data['comment']
             assignee_id = request.data['assignee']
             assignee = get_user_by_id(assignee_id)
             incident_request_advice(request.user, incident, assignee, comment)
 
         elif workflow == "provide-advice":
-            comment = json.dumps(request.data['comment'])
+            comment = request.data['comment']
             start_event_id = request.data['start_event']
             start_event = event_service.get_event_by_id(start_event_id)
             incident_provide_advice(request.user, incident, comment, start_event)
 
         elif workflow == "verify":
-            comment = json.dumps(request.data['comment'])
-            proof = json.dumps(request.data['proof'])
+            comment = request.data['comment']
+            proof = request.data['proof']
             incident_verify(request.user, incident, comment, proof)
-            incident_escalate(request.user, incident)
+            incident_escalate(request.user, incident, comment=comment)
 
         elif workflow == "invalidate":
-            comment = json.dumps(request.data['comment'])
+            comment = request.data['comment']
             incident_invalidate(request.user, incident, comment)
 
         elif workflow == "assign":
@@ -355,10 +382,9 @@ class IncidentWorkflowView(APIView):
             incident_change_assignee(request.user, incident, assignee)
 
         elif workflow == "escalate":
-            # comment is actually an object
-            # comment: { comment: "text", responseTime: 1 }
-            comment = json.dumps(request.data['comment'])
-            incident_escalate(request.user, incident, comment=comment)
+            comment = request.data['comment']
+            response_time = request.data['responseTime']
+            incident_escalate(request.user, incident, comment=comment, response_time=response_time)
 
         else:
             return Response("Invalid workflow", status=status.HTTP_400_BAD_REQUEST)
@@ -369,9 +395,10 @@ class IncidentMediaView(APIView):
     def post(self, request, incident_id, format=None):
 
         incident = get_incident_by_id(incident_id)
-        file_id = request.data['file_id']
-        uploaded_file = file_services.get_file_by_id(file_id)
-        attach_media(request.user, incident, uploaded_file)
+        file_id_set = request.data['file_id_set']
+
+        for file_id in file_id_set:
+            attach_media(request.user, incident, file_services.get_file_by_id(file_id))
 
         return Response("Incident workflow success", status=status.HTTP_200_OK)
 
@@ -399,7 +426,7 @@ class IncidentPublicUserView(APIView):
 
         if serializer.is_valid():
             incident = serializer.save()
-            create_incident_postscript(incident, None)            
+            create_incident_postscript(incident, None)
             return_data = serializer.data
 
             return Response(return_data, status=status.HTTP_201_CREATED)
@@ -439,9 +466,10 @@ class IncidentMediaPublicUserView(APIView):
     def post(self, request, incident_id, format=None):
 
         incident = get_incident_by_id(incident_id)
-        file_id = request.data['file_id']
-        uploaded_file = file_services.get_file_by_id(file_id)
-        attach_media(get_guest_user(), incident, uploaded_file)
+        file_id_set = request.data['file_id_set']
+
+        for file_id in file_id_set:
+            attach_media(get_guest_user(), incident, file_services.get_file_by_id(file_id))
 
         return Response("Incident workflow success", status=status.HTTP_200_OK)
 

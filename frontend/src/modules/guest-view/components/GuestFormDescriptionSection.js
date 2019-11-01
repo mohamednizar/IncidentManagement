@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import classNames from "classnames";
 import { useIntl } from "react-intl";
@@ -25,9 +25,17 @@ const IncidentDescription = props => {
     handleElectionChange,
     description,
     elections,
-    selectedElection
+    selectedElection,
+    disableDescription,
+    formErrors
   } = props;
   let intl = useIntl();
+
+  useEffect(() => {
+    if (!selectedElection && elections.length == 1) {
+      handleElectionChange(elections[0].code);
+    }
+  })
 
   return (
     <form className={classes.container} noValidate autoComplete="off">
@@ -36,16 +44,23 @@ const IncidentDescription = props => {
           <TextField
             autoFocus
             id="incidentDescription"
-            label="Description"
+            label={intl.formatMessage({
+              id: "eclk.incident.management.report.incidents.description",
+              defaultMessage: "Description"
+            })+"*"}
             multiline
             fullWidth
             rowsMax="4"
             value={description}
             onChange={e => {
               handledDescriptionChange(e.target.value);
+              formErrors.incidentDescriptionErrorMsg = null;
             }}
             className={classes.textField}
             margin="normal"
+            disabled={disableDescription}
+            helperText={formErrors.incidentDescriptionErrorMsg || ""}
+            error={formErrors.incidentDescriptionErrorMsg ? true : false}
           />
         </Grid>
 
@@ -56,23 +71,26 @@ const IncidentDescription = props => {
             label={intl.formatMessage({
               id: "eclk.incident.management.report.incidents.election",
               defaultMessage: "Election"
-            })}
+            })+"*"}
             className={classes.textField}
             value={selectedElection}
             onChange={e => {
               handleElectionChange(e.target.value);
+              formErrors.incidentElectionErrorMsg = null;
             }}
             SelectProps={{
               MenuProps: {
                 className: classes.menu
               }
             }}
-            helperText="Select the relevant election"
+            helperText={formErrors.incidentElectionErrorMsg || ""}
+            error={formErrors.incidentElectionErrorMsg ? true : false}
             margin="normal"
+            fullWidth
           >
             {elections.map(option => (
               <MenuItem key={option.value} value={option.code}>
-                {option.name}
+                {option.name} | {option.sn_name} | {option.tm_name}
               </MenuItem>
             ))}
           </TextField>

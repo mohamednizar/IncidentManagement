@@ -6,227 +6,112 @@ import numpy as np
 
 from ..common.models import Category, Channel
 from ..incidents.models import Incident
-from .functions import get_detailed_report, get_general_report, encode_column_names, get_subcategory_report
+from .functions import get_detailed_report, get_general_report, encode_column_names, get_subcategory_report, \
+    incident_type_query, incident_list_query, date_list_query, encode_value, get_subcategory_categorized_report
 
 
-def get_category_summary(start_date, end_date, detailed_report):
-    if detailed_report == 'true':
-        columns = set(Category.objects.all().values_list("top_category", flat=True))
-        columns = encode_column_names(columns)
+def get_category_summary(start_date, end_date, detailed_report, complain, inquiry):
+    sql3 = incident_type_query(complain, inquiry)
+    incident_list = incident_list_query(start_date, end_date, sql3)
+    if detailed_report:
+        columns = list(set(Category.objects.all().values_list("top_category", flat=True)))
         columns.insert(0, "Unassigned")
         sql2 = ", ".join(
             map(lambda c: "(CASE WHEN ifnull(%s,'Unassigned') LIKE '%s' THEN 1 ELSE 0 END) AS '%s'" % (
-                'top_category', c, c), columns))
+                'top_category', c, encode_value(c)), columns))
         sql1 = """
                         SELECT district,
                                    %s
                                   ,
                                   1       AS Total
                            FROM   incidents_incident
-                           left join common_category on category=common_category.id
-                           WHERE  incidents_incident.created_date BETWEEN
-                                  '%s' AND
-                                  '%s'
-                        """ % (sql2, start_date, end_date)
-        return get_detailed_report(sql1, columns)
-    return get_general_report("top_category", "Category", "common_category", "category", "id", start_date, end_date)
-
-
-def get_subcategory_summary(start_date, end_date, detailed_report):
-    if detailed_report == 'true':
-        columns = set(Category.objects.all().values_list("sub_category", flat=True))
+                           LEFT JOIN common_category ON category=common_category.id
+                           %s
+                        """ % (sql2, incident_list)
         columns = encode_column_names(columns)
-        columns.insert(0, "Unassigned")
-        sqls = ", ".join(
-            map(lambda c: "(CASE WHEN ifnull(%s,'Unassigned') LIKE '%s' THEN 1 ELSE 0 END) AS '%s'" % (
-                'sub_category', c, c), columns))
-        sql1 = """
-                                SELECT district,
-                                           %s
-                                          ,
-                                          1       AS Total
-                                   FROM   incidents_incident
-                                   left join common_category on category=common_category.id
-                                   WHERE  incidents_incident.created_date BETWEEN
-                                          '%s' AND
-                                          '%s'
-                                """ % (sqls, start_date, end_date)
         return get_detailed_report(sql1, columns)
-    return get_subcategory_report("sub_category", "Subcategory", "common_category", "category", "id", start_date, end_date)
+    return get_general_report("top_category", "Category", "common_category", "category", "id", start_date, end_date,
+                              sql3)
 
 
-def get_mode_summary(start_date, end_date, detailed_report):
-    if detailed_report == 'true':
-        columns = set(Channel.objects.all().values_list("name", flat=True))
-        columns = encode_column_names(columns)
+def get_subcategory_summary(start_date, end_date, detailed_report, complain, inquiry):
+    sql3 = incident_type_query(complain, inquiry)
+    incident_list = incident_list_query(start_date, end_date, sql3)
+    if detailed_report:
+        tables = ""
+        for category in list(Category.objects.order_by().values_list("top_category", flat=True).distinct()):
+            tables += "<br><br><br><br>" + (get_subcategory_categorized_report(incident_list, category))
+        return tables
+    return get_subcategory_report("sub_category", "Subcategory", "common_category", "category", "id", start_date,
+                                  end_date, sql3)
+
+
+def get_mode_summary(start_date, end_date, detailed_report, complain, inquiry):
+    sql3 = incident_type_query(complain, inquiry)
+    incident_list = incident_list_query(start_date, end_date, sql3)
+    if detailed_report:
+        columns = list(set(Channel.objects.all().values_list("name", flat=True)))
         columns.insert(0, "Unassigned")
         sql2 = ", ".join(
             map(lambda c: "(CASE WHEN ifnull(%s,'Unassigned') LIKE '%s' THEN 1 ELSE 0 END) AS '%s'" % (
-                'name', c, c), columns))
+                'name', c, encode_value(c)), columns))
         sql1 = """
                 SELECT district,
                            %s
                           ,
                           1       AS Total
                    FROM   incidents_incident
-                   left join common_channel on infoChannel=common_channel.id
-                   WHERE  incidents_incident.created_date BETWEEN
-                          '%s' AND
-                          '%s'
-                """ % (sql2, start_date, end_date)
-        print(sql1)
+                   LEFT JOIN common_channel ON infoChannel=common_channel.id
+                   %s
+                """ % (sql2, incident_list)
+        columns = encode_column_names(columns)
         return get_detailed_report(sql1, columns)
-    return get_general_report("name", "Mode", "common_channel", "infoChannel", "id", start_date, end_date)
+    return get_general_report("name", "Mode", "common_channel", "infoChannel", "id", start_date, end_date, sql3)
 
 
-def get_incident_date_summary(start_date, end_date, detailed_report):
+def get_incident_date_summary(start_date, end_date, detailed_report, complain, inquiry):
+    sql3 = incident_type_query(complain, inquiry)
+    incident_list = incident_list_query(start_date, end_date, sql3)
     sql = """
             SELECT incident_date as 'Incident Date', 
        Total 
 FROM   (SELECT incident_date, 
                Sum(Total) AS Total 
-        FROM   (SELECT Date_format(occured_date + INTERVAL 8 hour, '%s') 
+        FROM   (SELECT Date_format(occured_date + INTERVAL 8 HOUR, '%s') 
                        AS 
                        incident_date 
                                , 
                        '1' 
                                AS Total 
                 FROM   incidents_incident 
-                WHERE  incidents_incident.created_date BETWEEN 
-                       '%s' AND '%s' 
+                %s
                 UNION ALL 
                 SELECT selected_date, 
                        '0' 
-                FROM   (SELECT * 
-                        FROM   (SELECT Adddate('2018-01-01', 
-                                       t4.i * 10000 + t3.i * 1000 
-                                       + 
-                                       t2.i * 100 + 
-                                               t1.i * 10 + 
-                                       t0.i) selected_date 
-                                FROM   (SELECT 0 i 
-                                        UNION 
-                                        SELECT 1 
-                                        UNION 
-                                        SELECT 2 
-                                        UNION 
-                                        SELECT 3 
-                                        UNION 
-                                        SELECT 4 
-                                        UNION 
-                                        SELECT 5 
-                                        UNION 
-                                        SELECT 6 
-                                        UNION 
-                                        SELECT 7 
-                                        UNION 
-                                        SELECT 8 
-                                        UNION 
-                                        SELECT 9) t0, 
-                                       (SELECT 0 i 
-                                        UNION 
-                                        SELECT 1 
-                                        UNION 
-                                        SELECT 2 
-                                        UNION 
-                                        SELECT 3 
-                                        UNION 
-                                        SELECT 4 
-                                        UNION 
-                                        SELECT 5 
-                                        UNION 
-                                        SELECT 6 
-                                        UNION 
-                                        SELECT 7 
-                                        UNION 
-                                        SELECT 8 
-                                        UNION 
-                                        SELECT 9) t1, 
-                                       (SELECT 0 i 
-                                        UNION 
-                                        SELECT 1 
-                                        UNION 
-                                        SELECT 2 
-                                        UNION 
-                                        SELECT 3 
-                                        UNION 
-                                        SELECT 4 
-                                        UNION 
-                                        SELECT 5 
-                                        UNION 
-                                        SELECT 6 
-                                        UNION 
-                                        SELECT 7 
-                                        UNION 
-                                        SELECT 8 
-                                        UNION 
-                                        SELECT 9) t2, 
-                                       (SELECT 0 i 
-                                        UNION 
-                                        SELECT 1 
-                                        UNION 
-                                        SELECT 2 
-                                        UNION 
-                                        SELECT 3 
-                                        UNION 
-                                        SELECT 4 
-                                        UNION 
-                                        SELECT 5 
-                                        UNION 
-                                        SELECT 6 
-                                        UNION 
-                                        SELECT 7 
-                                        UNION 
-                                        SELECT 8 
-                                        UNION 
-                                        SELECT 9) t3, 
-                                       (SELECT 0 i 
-                                        UNION 
-                                        SELECT 1 
-                                        UNION 
-                                        SELECT 2 
-                                        UNION 
-                                        SELECT 3 
-                                        UNION 
-                                        SELECT 4 
-                                        UNION 
-                                        SELECT 5 
-                                        UNION 
-                                        SELECT 6 
-                                        UNION 
-                                        SELECT 7 
-                                        UNION 
-                                        SELECT 8 
-                                        UNION 
-                                        SELECT 9) t4) v 
-                        WHERE  selected_date BETWEEN 
-                               Date_format('%s', 
-                               '%s' 
-                               ) 
-                               AND 
-                               Date_format('%s', 
-                               '%s' 
-                               )) AS dateranges) AS result 
+                FROM   (%s) AS dateranges) AS result 
         GROUP  BY result.incident_date 
         ORDER  BY incident_date) AS result2 
 UNION 
 SELECT '(Total No. of Incidents)', 
        Count(id) 
 FROM   incidents_incident 
-WHERE  incidents_incident.created_date BETWEEN 
-       '%s' AND '%s' 
-            """ % ("%Y-%m-%d",start_date, end_date, start_date,"%Y-%m-%d", end_date,"%Y-%m-%d", start_date, end_date)
+%s
+            """ % (
+        "%Y-%m-%d", incident_list, date_list_query(start_date, end_date), incident_list)
     dataframe = pd.read_sql_query(sql, connection)
     dataframe = dataframe.fillna(0)
     return dataframe.to_html(index=False)
 
 
-def get_district_summary(start_date, end_date, detailed_report):
-    return get_general_report("name", "District", "common_district", "district", "code", start_date, end_date)
+def get_district_summary(start_date, end_date, detailed_report, complain, inquiry):
+    sql3 = incident_type_query(complain, inquiry)
+    return get_general_report("name", "District", "common_district", "district", "code", start_date, end_date, sql3)
 
 
-def get_severity_summary(start_date, end_date, detailed_report):
-    if detailed_report == 'true':
+def get_severity_summary(start_date, end_date, detailed_report, complain, inquiry):
+    sql3 = incident_type_query(complain, inquiry)
+    incident_list = incident_list_query(start_date, end_date, sql3)
+    if detailed_report:
         sql1 = """
         SELECT district,
                   ( CASE
@@ -247,10 +132,8 @@ def get_severity_summary(start_date, end_date, detailed_report):
                     end ) AS Low,
                   1       AS Total
            FROM   incidents_incident
-           WHERE  incidents_incident.created_date BETWEEN
-                  '%s' AND
-                  '%s'
-        """ % (start_date, end_date)
+           %s
+        """ % incident_list
         columns = ["High", "Medium", "Low"]
         return get_detailed_report(sql1, columns)
 
@@ -269,32 +152,33 @@ def get_severity_summary(start_date, end_date, detailed_report):
                                      END)                                           AS currentstate,
                                      Count(Ifnull(incidents_incident.severity,0)) AS subtotal
                             FROM     incidents_incident
-                            WHERE    incidents_incident.created_date BETWEEN '%s' AND      '%s'
+                            %s
                             GROUP BY currentstate) AS incidents
          ON        currentstate = d.name 
          UNION ALL
         SELECT '(Total No. of Incidents)',
                Count(id)
         FROM   incidents_incident
-        WHERE  incidents_incident.created_date BETWEEN '%s' AND '%s'
+        %s
         ORDER  BY Field(Severity, 'High', 'Medium', 'Low', '(Total No. of Incidents)') 
-    """ % (start_date, end_date, start_date, end_date)
+    """ % (incident_list, incident_list)
     dataframe = pd.read_sql_query(sql, connection)
     dataframe = dataframe.fillna(0)
     return dataframe.to_html(index=False)
 
 
-def get_status_summary(start_date, end_date, detailed_report):
-    if detailed_report == 'true':
+def get_status_summary(start_date, end_date, detailed_report, complain, inquiry):
+    sql3 = incident_type_query(complain, inquiry)
+    incident_list = incident_list_query(start_date, end_date, sql3)
+    if detailed_report:
         sql1 = """
         SELECT district,( 
                CASE WHEN Ifnull(current_status, 'Unassigned') LIKE 'CLOSED' THEN 1 ELSE 0 END )AS Resolved,
                (CASE WHEN Ifnull(current_status, 'Unassigned')  NOT LIKE 'CLOSED' THEN 1 ELSE 0 END )AS Unresolved,
                              1 AS Total
                       FROM   incidents_incident
-                      WHERE  incidents_incident.created_date BETWEEN '%s' AND
-                                                  '%s'
-        """ % (start_date, end_date)
+                     %s
+        """ % incident_list
         columns = ["Resolved", "Unresolved"]
         return get_detailed_report(sql1, columns)
 
@@ -309,20 +193,19 @@ def get_status_summary(start_date, end_date, detailed_report):
                                                                        THEN
                                      'Resolved'
                                      ELSE 'Unresolved'
-                                   end )                          AS currentState,
+                                   END )                          AS currentState,
                                  Count(Ifnull(current_status, 1)) AS subtotal
                           FROM   incidents_incident
-                          WHERE  incidents_incident.created_date BETWEEN '%s' AND
-                                                      '%s'
+                          %s
                           GROUP  BY currentstate) AS incidents
                       ON currentstate = d.name
         UNION ALL
         SELECT '(Total No. of Incidents)',
                Count(id)
         FROM   incidents_incident
-        WHERE  incidents_incident.created_date BETWEEN '%s' AND '%s'
+        %s
         ORDER  BY Field(status, 'Resolved', 'Unresolved', '(Total No. of Incidents)') 
-    """ % (start_date, end_date, start_date, end_date)
+    """ % (incident_list, incident_list)
     dataframe = pd.read_sql_query(sql, connection)
     dataframe = dataframe.fillna(0)
     return dataframe.to_html(index=False)
@@ -334,10 +217,10 @@ def get_police_division_summary():
             incident.province,
             incident.di_division,
             incident.police_division,
-            COUNT(incident.police_station) as police_station_count,
-            COUNT(incident.id) as division_total,
-            COUNT(CASE WHEN cs.current_status <> "CLOSED" THEN 1 ELSE NULL END) as open_total,
-            COUNT(CASE WHEN cs.current_status = "CLOSED" THEN 1 ELSE NULL END) as closed_total
+            COUNT(incident.police_station) AS police_station_count,
+            COUNT(incident.id) AS division_total,
+            COUNT(CASE WHEN cs.current_status <> "CLOSED" THEN 1 ELSE NULL END) AS open_total,
+            COUNT(CASE WHEN cs.current_status = "CLOSED" THEN 1 ELSE NULL END) AS closed_total
           FROM incidents_incident incident,
           ( 
             SELECT b.incident_id, b.current_status
@@ -348,7 +231,7 @@ def get_police_division_summary():
               GROUP BY i.incident_id
             ) c 
             ON c.incident_id = b.incident_id AND c.cdate = b.created_date
-          ) as cs 
+          ) AS cs 
           WHERE cs.incident_id = incident.id
           GROUP BY incident.province, incident.di_division, incident.police_division
         """
